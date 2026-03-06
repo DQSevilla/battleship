@@ -8,24 +8,50 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/DQSevilla/battleship/internal/ai"
 	"github.com/DQSevilla/battleship/internal/game"
 	"github.com/DQSevilla/battleship/internal/room"
 )
 
 // Handler manages WebSocket connections and routes messages.
 type Handler struct {
-	rooms    *room.Manager
-	playerID uint64 // atomic counter would be better, but fine for now
+	rooms *room.Manager
+	aiMu  sync.Mutex
+	ais   map[string]*ai.AI // room code -> AI instance
 }
 
 // NewHandler creates a new WebSocket handler.
 func NewHandler(rooms *room.Manager) *Handler {
 	return &Handler{
 		rooms: rooms,
+		ais:   make(map[string]*ai.AI),
 	}
+}
+
+// getAI retrieves the AI for a room.
+func (h *Handler) getAI(roomCode string) *ai.AI {
+	h.aiMu.Lock()
+	defer h.aiMu.Unlock()
+	return h.ais[roomCode]
+}
+
+// setAI stores the AI for a room.
+func (h *Handler) setAI(roomCode string, a *ai.AI) {
+	h.aiMu.Lock()
+	defer h.aiMu.Unlock()
+	h.ais[roomCode] = a
+}
+
+// removeAI removes the AI for a room.
+func (h *Handler) removeAI(roomCode string) {
+	h.aiMu.Lock()
+	defer h.aiMu.Unlock()
+	delete(h.ais, roomCode)
 }
 
 // ServeHTTP upgrades the connection to WebSocket and starts handling messages.
@@ -152,6 +178,12 @@ func (h *Handler) handleCreateGame(ctx context.Context, conn *websocket.Conn, ms
 	})
 
 	log.Printf("game created: room=%s player=%s mode=%s", r.Code, playerID, mode)
+
+	// If AI mode, add AI player, place AI ships, and start game immediately.
+	if mode == "ai" {
+		h.setupAIPlayer(ctx, r, playerID)
+	}
+
 	return r, playerID
 }
 
@@ -230,7 +262,7 @@ func (h *Handler) handlePlaceShip(ctx context.Context, r *room.Room, playerID st
 		Remaining:   remaining,
 	})
 
-	// If this player is now ready, notify opponent.
+	// If this player is now ready, notify opponent (human games only).
 	if player.AllPlaced() {
 		opponent := r.GetOpponentConn(playerID)
 		if opponent != nil {
@@ -243,17 +275,26 @@ func (h *Handler) handlePlaceShip(ctx context.Context, r *room.Room, playerID st
 
 	// If both players are ready, transition to firing and notify.
 	if r.Game.BothReady() {
-		turnPlayerID := r.Game.GetTurnPlayerID()
-
-		// Send turn updates to both players.
-		for _, pc := range r.Players {
-			if pc != nil {
-				isYourTurn := pc.PlayerID == turnPlayerID
-				_ = pc.Send(ctx, ServerMessage{
-					Type:     MsgAllPlaced,
-					Message:  "All ships placed! Firing phase begins.",
-					YourTurn: &isYourTurn,
-				})
+		if r.Mode == "ai" {
+			// In AI mode, only notify the human player.
+			isYourTurn := true
+			_ = r.SendTo(ctx, playerID, ServerMessage{
+				Type:     MsgAllPlaced,
+				Message:  "All ships placed! Firing phase begins. Your turn!",
+				YourTurn: &isYourTurn,
+			})
+		} else {
+			turnPlayerID := r.Game.GetTurnPlayerID()
+			// Send turn updates to both players.
+			for _, pc := range r.Players {
+				if pc != nil {
+					isYourTurn := pc.PlayerID == turnPlayerID
+					_ = pc.Send(ctx, ServerMessage{
+						Type:     MsgAllPlaced,
+						Message:  "All ships placed! Firing phase begins.",
+						YourTurn: &isYourTurn,
+					})
+				}
 			}
 		}
 	}
@@ -292,20 +333,39 @@ func (h *Handler) handleFire(ctx context.Context, r *room.Room, playerID string,
 	}
 
 	if result.GameOver {
-		// Send game over to both players.
-		for _, pc := range r.Players {
-			if pc != nil {
-				youWin := pc.PlayerID == result.Winner
-				_ = pc.Send(ctx, ServerMessage{
-					Type:   MsgGameOver,
-					Winner: result.Winner,
-					YouWin: &youWin,
-				})
+		if r.Mode == "ai" {
+			// AI game: only notify the human.
+			youWin := true
+			_ = r.SendTo(ctx, playerID, ServerMessage{
+				Type:   MsgGameOver,
+				Winner: result.Winner,
+				YouWin: &youWin,
+			})
+			h.removeAI(r.Code)
+		} else {
+			// Human game: notify both players.
+			for _, pc := range r.Players {
+				if pc != nil {
+					youWin := pc.PlayerID == result.Winner
+					_ = pc.Send(ctx, ServerMessage{
+						Type:   MsgGameOver,
+						Winner: result.Winner,
+						YouWin: &youWin,
+					})
+				}
 			}
 		}
 		log.Printf("game over: room=%s winner=%s", r.Code, result.Winner)
+	} else if r.Mode == "ai" {
+		// AI game: it's now the AI's turn. Fire back.
+		isYourTurn := false
+		_ = r.SendTo(ctx, playerID, ServerMessage{
+			Type:     MsgTurnUpdate,
+			YourTurn: &isYourTurn,
+		})
+		go h.aiTakeTurn(ctx, r, playerID)
 	} else {
-		// Send turn update to both players.
+		// Human game: send turn update to both players.
 		turnPlayerID := r.Game.GetTurnPlayerID()
 		for _, pc := range r.Players {
 			if pc != nil {
@@ -316,6 +376,92 @@ func (h *Handler) handleFire(ctx context.Context, r *room.Room, playerID string,
 				})
 			}
 		}
+	}
+}
+
+// --- AI Support ---
+
+// setupAIPlayer adds an AI player to the game, places its ships, and transitions
+// the game to the placement phase (the human still needs to place their ships).
+func (h *Handler) setupAIPlayer(ctx context.Context, r *room.Room, humanPlayerID string) {
+	cfg := r.Game.Config
+	aiPlayerID := "ai-opponent"
+
+	// Add AI as second player (transitions game to PhasePlacing).
+	if err := r.Game.AddPlayer(aiPlayerID); err != nil {
+		log.Printf("failed to add AI player: %v", err)
+		return
+	}
+
+	r.AIPlayerID = aiPlayerID
+
+	// Create AI and place its ships.
+	aiInstance := ai.New(cfg)
+	h.setAI(r.Code, aiInstance)
+
+	placements := aiInstance.PlaceShips()
+	for _, p := range placements {
+		if err := r.Game.PlaceShip(aiPlayerID, p.Ship.Name, p.Start, p.Orient); err != nil {
+			log.Printf("AI failed to place ship %s: %v", p.Ship.Name, err)
+			return
+		}
+	}
+
+	// Tell the human player the game has started (AI is ready).
+	_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
+		Type:    MsgGameStart,
+		Message: "AI opponent is ready. Place your ships!",
+	})
+
+	log.Printf("AI setup complete: room=%s", r.Code)
+}
+
+// aiTakeTurn executes the AI's turn: choose a shot, fire, notify the human,
+// then check for game over.
+func (h *Handler) aiTakeTurn(ctx context.Context, r *room.Room, humanPlayerID string) {
+	aiInstance := h.getAI(r.Code)
+	if aiInstance == nil {
+		return
+	}
+
+	// Small delay so the human can see the turn switch.
+	time.Sleep(500 * time.Millisecond)
+
+	target := aiInstance.ChooseShot()
+
+	result, err := r.Game.Fire(r.AIPlayerID, target)
+	if err != nil {
+		log.Printf("AI fire error: %v", err)
+		return
+	}
+
+	// Update AI knowledge.
+	aiInstance.RecordResult(target, result.Hit, result.SunkShip)
+
+	// Notify human that AI fired at their board.
+	_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
+		Type:     MsgOpponentFired,
+		Coord:    &result.Coord,
+		Hit:      &result.Hit,
+		SunkShip: result.SunkShip,
+	})
+
+	if result.GameOver {
+		youWin := false
+		_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
+			Type:   MsgGameOver,
+			Winner: r.AIPlayerID,
+			YouWin: &youWin,
+		})
+		h.removeAI(r.Code)
+		log.Printf("game over (AI wins): room=%s", r.Code)
+	} else {
+		// It's the human's turn again.
+		isYourTurn := true
+		_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
+			Type:     MsgTurnUpdate,
+			YourTurn: &isYourTurn,
+		})
 	}
 }
 

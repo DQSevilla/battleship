@@ -42,11 +42,12 @@ func (pc *PlayerConn) Send(ctx context.Context, msg interface{}) error {
 
 // Room holds a game and the connected players.
 type Room struct {
-	Code    string
-	Game    *game.Game
-	Players [2]*PlayerConn
-	Mode    string // "ai" or "human"
-	mu      sync.Mutex
+	Code       string
+	Game       *game.Game
+	Players    [2]*PlayerConn
+	Mode       string // "ai" or "human"
+	AIPlayerID string // set when Mode == "ai"
+	mu         sync.Mutex
 }
 
 // Broadcast sends a message to all connected players in the room.
