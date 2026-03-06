@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Battleship</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- Menu Screen -->
+  <div id="screen-menu" class="screen active">
+    <h1>Battleship</h1>
+    <div class="menu-container">
+      <button id="btn-vs-ai" class="btn btn-primary">Play vs AI</button>
+      <button id="btn-vs-human" class="btn btn-secondary">Play vs Human</button>
+      <div class="divider">or</div>
+      <div class="join-section">
+        <input type="text" id="input-room-code" placeholder="Room Code" maxlength="4" autocomplete="off">
+        <button id="btn-join" class="btn btn-secondary">Join Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Waiting Screen (multiplayer host waiting for opponent) -->
+  <div id="screen-waiting" class="screen">
+    <h1>Battleship</h1>
+    <div class="waiting-container">
+      <p>Waiting for opponent...</p>
+      <p class="room-code-display">Room Code: <span id="display-room-code"></span></p>
+      <p class="hint">Share this code with your opponent</p>
+    </div>
+  </div>
+
+  <!-- Placement Screen -->
+  <div id="screen-placement" class="screen">
+    <h1>Place Your Ships</h1>
+    <div class="placement-container">
+      <div class="placement-controls">
+        <div id="ship-list" class="ship-list"></div>
+        <button id="btn-rotate" class="btn btn-small">Rotate (R)</button>
+        <p id="placement-status" class="status-text"></p>
+      </div>
+      <div class="board-wrapper">
+        <h2>Your Board</h2>
+        <div id="board-placement" class="board"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firing Screen -->
+  <div id="screen-firing" class="screen">
+    <div class="firing-container">
+      <p id="turn-indicator" class="turn-indicator"></p>
+      <div class="boards">
+        <div class="board-wrapper">
+          <h2>Your Fleet</h2>
+          <div id="board-own" class="board board-own"></div>
+        </div>
+        <div class="board-wrapper">
+          <h2>Opponent's Waters</h2>
+          <div id="board-opponent" class="board board-opponent"></div>
+        </div>
+      </div>
+      <div id="game-log" class="game-log"></div>
+    </div>
+  </div>
+
+  <!-- Game Over Screen -->
+  <div id="screen-gameover" class="screen">
+    <h1 id="gameover-title"></h1>
+    <div class="gameover-container">
+      <p id="gameover-message"></p>
+      <button id="btn-rematch" class="btn btn-primary">Play Again</button>
+      <button id="btn-menu" class="btn btn-secondary">Main Menu</button>
+    </div>
+  </div>
+
+  <script src="js/game.js"></script>
+</body>
+</html>

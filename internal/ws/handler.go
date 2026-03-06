@@ -16,20 +16,52 @@ import (
 	"github.com/DQSevilla/battleship/internal/ai"
 	"github.com/DQSevilla/battleship/internal/game"
 	"github.com/DQSevilla/battleship/internal/room"
+	"github.com/DQSevilla/battleship/internal/store"
 )
 
 // Handler manages WebSocket connections and routes messages.
 type Handler struct {
 	rooms *room.Manager
+	store *store.Store
 	aiMu  sync.Mutex
 	ais   map[string]*ai.AI // room code -> AI instance
 }
 
 // NewHandler creates a new WebSocket handler.
-func NewHandler(rooms *room.Manager) *Handler {
+func NewHandler(rooms *room.Manager, st *store.Store) *Handler {
 	return &Handler{
 		rooms: rooms,
+		store: st,
 		ais:   make(map[string]*ai.AI),
+	}
+}
+
+// persistGame saves the current game state to the store (best-effort).
+func (h *Handler) persistGame(r *room.Room) {
+	if h.store == nil {
+		return
+	}
+	rec := store.BuildGameRecord(r.Game, r.Code, r.Mode)
+	if err := h.store.SaveGame(rec); err != nil {
+		log.Printf("persist game error: %v", err)
+	}
+}
+
+// persistMove saves a move to the store (best-effort).
+func (h *Handler) persistMove(gameID, playerID, moveType string, data interface{}) {
+	if h.store == nil {
+		return
+	}
+	dataJSON, _ := json.Marshal(data)
+	move := store.MoveRecord{
+		GameID:    gameID,
+		PlayerID:  playerID,
+		MoveType:  moveType,
+		DataJSON:  string(dataJSON),
+		CreatedAt: time.Now(),
+	}
+	if err := h.store.SaveMove(move); err != nil {
+		log.Printf("persist move error: %v", err)
 	}
 }
 
@@ -184,6 +216,7 @@ func (h *Handler) handleCreateGame(ctx context.Context, conn *websocket.Conn, ms
 		h.setupAIPlayer(ctx, r, playerID)
 	}
 
+	h.persistGame(r)
 	return r, playerID
 }
 
@@ -230,6 +263,7 @@ func (h *Handler) handleJoinGame(ctx context.Context, conn *websocket.Conn, msg 
 	})
 
 	log.Printf("player joined: room=%s player=%s", r.Code, playerID)
+	h.persistGame(r)
 	return r, playerID
 }
 
@@ -261,6 +295,13 @@ func (h *Handler) handlePlaceShip(ctx context.Context, r *room.Room, playerID st
 		Orientation: &orient,
 		Remaining:   remaining,
 	})
+
+	h.persistMove(r.Game.ID, playerID, "place", store.PlaceMoveData{
+		ShipName:    msg.ShipName,
+		Start:       *msg.Start,
+		Orientation: msg.Orientation,
+	})
+	h.persistGame(r)
 
 	// If this player is now ready, notify opponent (human games only).
 	if player.AllPlaced() {
@@ -313,6 +354,13 @@ func (h *Handler) handleFire(ctx context.Context, r *room.Room, playerID string,
 		return
 	}
 
+	h.persistMove(r.Game.ID, playerID, "fire", store.FireMoveData{
+		Target:   result.Coord,
+		Hit:      result.Hit,
+		SunkShip: result.SunkShip,
+		GameOver: result.GameOver,
+	})
+
 	// Send result to the attacker.
 	_ = r.SendTo(ctx, playerID, ServerMessage{
 		Type:     MsgFireResult,
@@ -355,6 +403,7 @@ func (h *Handler) handleFire(ctx context.Context, r *room.Room, playerID string,
 				}
 			}
 		}
+		h.persistGame(r)
 		log.Printf("game over: room=%s winner=%s", r.Code, result.Winner)
 	} else if r.Mode == "ai" {
 		// AI game: it's now the AI's turn. Fire back.
@@ -438,6 +487,13 @@ func (h *Handler) aiTakeTurn(ctx context.Context, r *room.Room, humanPlayerID st
 	// Update AI knowledge.
 	aiInstance.RecordResult(target, result.Hit, result.SunkShip)
 
+	h.persistMove(r.Game.ID, r.AIPlayerID, "fire", store.FireMoveData{
+		Target:   result.Coord,
+		Hit:      result.Hit,
+		SunkShip: result.SunkShip,
+		GameOver: result.GameOver,
+	})
+
 	// Notify human that AI fired at their board.
 	_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
 		Type:     MsgOpponentFired,
@@ -454,6 +510,7 @@ func (h *Handler) aiTakeTurn(ctx context.Context, r *room.Room, humanPlayerID st
 			YouWin: &youWin,
 		})
 		h.removeAI(r.Code)
+		h.persistGame(r)
 		log.Printf("game over (AI wins): room=%s", r.Code)
 	} else {
 		// It's the human's turn again.

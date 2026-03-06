@@ -1,0 +1,6 @@
+*.db
+.git
+.gitignore
+PLAN.md
+PROBLEM.md
+*.md
