@@ -2,7 +2,7 @@
 
 ## Stack
 
-- **Backend:** Go (`github.com/DQSevilla/battleship`), `nhooyr.io/websocket` for WebSocket support
+- **Backend:** Go (`github.com/DQSevilla/battleship`), `github.com/coder/websocket` for WebSocket support
 - **Frontend:** Vanilla HTML/CSS/JS, CSS Grid, no build step
 - **Storage:** SQLite via `modernc.org/sqlite` (pure Go, no CGO — easy cross-compilation and deployment)
 - **Deployment:** Railway (Dockerfile-based)
@@ -84,7 +84,7 @@ battleship/
 
 ### Phase 2 — WebSocket Server & Rooms
 
-- HTTP server with `nhooyr.io/websocket`
+- HTTP server with `github.com/coder/websocket`
 - `Room` struct: two player connections, game instance, message routing
 - `RoomManager`: create room (returns code), join room (by code)
 - JSON message protocol for all game actions
