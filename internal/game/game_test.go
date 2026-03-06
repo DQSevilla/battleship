@@ -122,14 +122,14 @@ func TestBoardReceiveShotMiss(t *testing.T) {
 	b := NewBoard(10)
 	_ = b.PlaceShip(ShipConfig{Name: "A", Length: 2}, Coord{0, 0}, Horizontal)
 
-	hit, sunk, err := b.ReceiveShot(Coord{5, 5})
+	result, err := b.ReceiveShot(Coord{5, 5})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if hit {
+	if result.Hit {
 		t.Error("expected miss")
 	}
-	if sunk != "" {
+	if result.SunkShip != "" {
 		t.Error("expected no sunk ship")
 	}
 	if b.Grid[5][5] != Miss {
@@ -141,14 +141,14 @@ func TestBoardReceiveShotHit(t *testing.T) {
 	b := NewBoard(10)
 	_ = b.PlaceShip(ShipConfig{Name: "Destroyer", Length: 2}, Coord{3, 4}, Horizontal)
 
-	hit, sunk, err := b.ReceiveShot(Coord{3, 4})
+	result, err := b.ReceiveShot(Coord{3, 4})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !hit {
+	if !result.Hit {
 		t.Error("expected hit")
 	}
-	if sunk != "" {
+	if result.SunkShip != "" {
 		t.Error("should not be sunk yet")
 	}
 	if b.Grid[4][3] != Hit {
@@ -161,22 +161,25 @@ func TestBoardReceiveShotSunk(t *testing.T) {
 	_ = b.PlaceShip(ShipConfig{Name: "Destroyer", Length: 2}, Coord{0, 0}, Horizontal)
 
 	b.ReceiveShot(Coord{0, 0})
-	hit, sunk, err := b.ReceiveShot(Coord{1, 0})
+	result, err := b.ReceiveShot(Coord{1, 0})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !hit {
+	if !result.Hit {
 		t.Error("expected hit")
 	}
-	if sunk != "Destroyer" {
-		t.Errorf("expected Destroyer to be sunk, got %q", sunk)
+	if result.SunkShip != "Destroyer" {
+		t.Errorf("expected Destroyer to be sunk, got %q", result.SunkShip)
+	}
+	if len(result.SunkShipCoords) != 2 {
+		t.Errorf("expected 2 sunk coords, got %d", len(result.SunkShipCoords))
 	}
 }
 
 func TestBoardReceiveShotDuplicate(t *testing.T) {
 	b := NewBoard(10)
 	b.ReceiveShot(Coord{0, 0})
-	_, _, err := b.ReceiveShot(Coord{0, 0})
+	_, err := b.ReceiveShot(Coord{0, 0})
 	if err != ErrAlreadyFired {
 		t.Errorf("expected ErrAlreadyFired, got %v", err)
 	}
@@ -184,11 +187,11 @@ func TestBoardReceiveShotDuplicate(t *testing.T) {
 
 func TestBoardReceiveShotOutOfBounds(t *testing.T) {
 	b := NewBoard(10)
-	_, _, err := b.ReceiveShot(Coord{-1, 0})
+	_, err := b.ReceiveShot(Coord{-1, 0})
 	if err != ErrInvalidCoord {
 		t.Errorf("expected ErrInvalidCoord, got %v", err)
 	}
-	_, _, err = b.ReceiveShot(Coord{10, 0})
+	_, err = b.ReceiveShot(Coord{10, 0})
 	if err != ErrInvalidCoord {
 		t.Errorf("expected ErrInvalidCoord, got %v", err)
 	}

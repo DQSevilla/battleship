@@ -6,6 +6,7 @@ import "github.com/DQSevilla/battleship/internal/game"
 const (
 	MsgCreateGame = "create_game"
 	MsgJoinGame   = "join_game"
+	MsgRejoinGame = "rejoin_game"
 	MsgPlaceShip  = "place_ship"
 	MsgFire       = "fire"
 )
@@ -24,6 +25,7 @@ const (
 	MsgTurnUpdate    = "turn_update"
 	MsgOpponentReady = "opponent_ready"
 	MsgOpponentLeft  = "opponent_left"
+	MsgGameState     = "game_state"
 )
 
 // ClientMessage is the envelope for all client-to-server messages.
@@ -33,8 +35,9 @@ type ClientMessage struct {
 	// create_game fields
 	Mode string `json:"mode,omitempty"` // "ai" or "human"
 
-	// join_game fields
+	// join_game / rejoin_game fields
 	RoomCode string `json:"room_code,omitempty"`
+	PlayerID string `json:"player_id,omitempty"` // rejoin_game: the player's original ID
 
 	// place_ship fields
 	ShipName    string           `json:"ship_name,omitempty"`
@@ -76,10 +79,26 @@ type ServerMessage struct {
 	// game_over
 	Winner string `json:"winner,omitempty"`
 	YouWin *bool  `json:"you_win,omitempty"`
+
+	// game_state (reconnection state hydration)
+	Phase          string           `json:"phase,omitempty"`            // "placement", "firing", "finished"
+	OwnBoard       [][]string       `json:"own_board,omitempty"`        // cell states for own board
+	OpponentBoard  [][]string       `json:"opponent_board,omitempty"`   // cell states for opponent board (no ship positions)
+	PlacedShips    []PlacedShipInfo `json:"placed_ships,omitempty"`     // ships the player has placed
+	RemainingShips []string         `json:"remaining_ships,omitempty"`  // ship names still to place
+	SunkShipCoords []game.Coord     `json:"sunk_ship_coords,omitempty"` // coords of a sunk ship
 }
 
 // ShipInfo is a summary of a ship for the client (used in game state sync).
 type ShipInfo struct {
 	Name   string `json:"name"`
 	Length int    `json:"length"`
+}
+
+// PlacedShipInfo describes a ship that has been placed on the board.
+type PlacedShipInfo struct {
+	Name        string           `json:"name"`
+	Length      int              `json:"length"`
+	Start       game.Coord       `json:"start"`
+	Orientation game.Orientation `json:"orientation"`
 }

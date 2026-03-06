@@ -17,11 +17,12 @@ const (
 
 // FireResult is returned from a Fire call with all relevant info.
 type FireResult struct {
-	Coord    Coord  `json:"coord"`
-	Hit      bool   `json:"hit"`
-	SunkShip string `json:"sunk_ship,omitempty"`
-	GameOver bool   `json:"game_over"`
-	Winner   string `json:"winner,omitempty"`
+	Coord          Coord   `json:"coord"`
+	Hit            bool    `json:"hit"`
+	SunkShip       string  `json:"sunk_ship,omitempty"`
+	SunkShipCoords []Coord `json:"sunk_ship_coords,omitempty"` // all coordinates of the sunk ship
+	GameOver       bool    `json:"game_over"`
+	Winner         string  `json:"winner,omitempty"`
 }
 
 // Game is the central game state machine.
@@ -167,17 +168,18 @@ func (g *Game) Fire(playerID string, target Coord) (FireResult, error) {
 		return FireResult{}, ErrAlreadyFired
 	}
 
-	hit, sunkShip, err := defender.Board.ReceiveShot(target)
+	shotResult, err := defender.Board.ReceiveShot(target)
 	if err != nil {
 		return FireResult{}, err
 	}
 
-	attacker.RecordShot(target, hit, sunkShip)
+	attacker.RecordShot(target, shotResult.Hit, shotResult.SunkShip)
 
 	result := FireResult{
-		Coord:    target,
-		Hit:      hit,
-		SunkShip: sunkShip,
+		Coord:          target,
+		Hit:            shotResult.Hit,
+		SunkShip:       shotResult.SunkShip,
+		SunkShipCoords: shotResult.SunkShipCoords,
 	}
 
 	// Check for win condition.
@@ -234,4 +236,47 @@ func (g *Game) GetOpponent(playerID string) *Player {
 		}
 	}
 	return nil
+}
+
+// RestoreGame creates a Game from previously persisted state (used on server restart).
+func RestoreGame(id string, cfg GameConfig, phase GamePhase, players [2]*Player, turn int, winner string, createdAt, updatedAt time.Time) *Game {
+	return &Game{
+		ID:        id,
+		Config:    cfg,
+		Phase:     phase,
+		Players:   players,
+		Turn:      turn,
+		Winner:    winner,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}
+}
+
+// GameSnapshot holds a point-in-time copy of game fields for safe
+// access outside the game mutex (e.g., persistence serialization).
+type GameSnapshot struct {
+	ID        string
+	Config    GameConfig
+	Phase     GamePhase
+	Players   [2]*Player
+	Turn      int
+	Winner    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Snapshot returns a thread-safe copy of the game's current state.
+func (g *Game) Snapshot() GameSnapshot {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return GameSnapshot{
+		ID:        g.ID,
+		Config:    g.Config,
+		Phase:     g.Phase,
+		Players:   g.Players,
+		Turn:      g.Turn,
+		Winner:    g.Winner,
+		CreatedAt: g.CreatedAt,
+		UpdatedAt: g.UpdatedAt,
+	}
 }

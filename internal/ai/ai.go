@@ -46,6 +46,17 @@ func New(cfg game.GameConfig) *AI {
 // PlaceShips randomly places all ships on a board and returns the placements.
 // Each placement is (ShipConfig, start Coord, Orientation).
 func (ai *AI) PlaceShips() []ShipPlacement {
+	return ai.placeShipsWithRetry(0)
+}
+
+const maxPlacementRetries = 100
+
+func (ai *AI) placeShipsWithRetry(depth int) []ShipPlacement {
+	if depth >= maxPlacementRetries {
+		// Should never happen with valid configs. Return nil to signal failure.
+		return nil
+	}
+
 	placements := make([]ShipPlacement, 0, len(ai.cfg.Ships))
 
 	// Sort ships by length descending — place largest first for fewer retries.
@@ -86,8 +97,8 @@ func (ai *AI) PlaceShips() []ShipPlacement {
 			}
 		}
 		if !placed {
-			// Extremely unlikely with valid configs, but retry the whole thing.
-			return ai.PlaceShips()
+			// Extremely unlikely with valid configs, retry with depth limit.
+			return ai.placeShipsWithRetry(depth + 1)
 		}
 	}
 

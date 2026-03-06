@@ -75,15 +75,14 @@ func NewBoard(size int) *Board {
 // PlaceShip places a ship on the board at the given position and orientation.
 // Returns an error if the placement is invalid.
 func (b *Board) PlaceShip(cfg ShipConfig, start Coord, orient Orientation) error {
-	// Compute all coordinates the ship would occupy.
-	coords := make([]Coord, cfg.Length)
-	for i := 0; i < cfg.Length; i++ {
-		if orient == Horizontal {
-			coords[i] = Coord{X: start.X + i, Y: start.Y}
-		} else {
-			coords[i] = Coord{X: start.X, Y: start.Y + i}
-		}
+	// Build a temporary PlacedShip to compute coordinates.
+	ship := &PlacedShip{
+		Config: cfg,
+		Start:  start,
+		Orient: orient,
+		Hits:   make([]bool, cfg.Length),
 	}
+	coords := ship.Coords()
 
 	// Bounds check.
 	for _, c := range coords {
@@ -100,12 +99,6 @@ func (b *Board) PlaceShip(cfg ShipConfig, start Coord, orient Orientation) error
 	}
 
 	// Place the ship.
-	ship := &PlacedShip{
-		Config: cfg,
-		Start:  start,
-		Orient: orient,
-		Hits:   make([]bool, cfg.Length),
-	}
 	for _, c := range coords {
 		b.Grid[c.Y][c.X] = Ship
 	}
@@ -113,17 +106,24 @@ func (b *Board) PlaceShip(cfg ShipConfig, start Coord, orient Orientation) error
 	return nil
 }
 
+// ShotResult holds the outcome of a shot on the board.
+type ShotResult struct {
+	Hit            bool
+	SunkShip       string
+	SunkShipCoords []Coord
+}
+
 // ReceiveShot processes an incoming shot at the given coordinate.
-// Returns the result and, if a ship was sunk, the ship's name.
-func (b *Board) ReceiveShot(c Coord) (hit bool, sunkShip string, err error) {
+// Returns the result and, if a ship was sunk, the ship's name and coordinates.
+func (b *Board) ReceiveShot(c Coord) (ShotResult, error) {
 	if c.X < 0 || c.X >= b.Size || c.Y < 0 || c.Y >= b.Size {
-		return false, "", ErrInvalidCoord
+		return ShotResult{}, ErrInvalidCoord
 	}
 
 	switch b.Grid[c.Y][c.X] {
 	case Empty:
 		b.Grid[c.Y][c.X] = Miss
-		return false, "", nil
+		return ShotResult{Hit: false}, nil
 	case Ship:
 		b.Grid[c.Y][c.X] = Hit
 		// Find which ship was hit and mark the segment.
@@ -132,19 +132,23 @@ func (b *Board) ReceiveShot(c Coord) (hit bool, sunkShip string, err error) {
 				if sc.X == c.X && sc.Y == c.Y {
 					ship.Hits[i] = true
 					if ship.IsSunk() {
-						return true, ship.Config.Name, nil
+						return ShotResult{
+							Hit:            true,
+							SunkShip:       ship.Config.Name,
+							SunkShipCoords: ship.Coords(),
+						}, nil
 					}
-					return true, "", nil
+					return ShotResult{Hit: true}, nil
 				}
 			}
 		}
 		// Should not reach here if board state is consistent.
-		return true, "", nil
+		return ShotResult{Hit: true}, nil
 	case Miss, Hit:
-		return false, "", ErrAlreadyFired
+		return ShotResult{}, ErrAlreadyFired
 	}
 
-	return false, "", ErrInvalidCoord
+	return ShotResult{}, ErrInvalidCoord
 }
 
 // AllSunk returns true if every ship on the board has been sunk.

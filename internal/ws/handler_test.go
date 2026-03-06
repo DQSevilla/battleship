@@ -16,7 +16,7 @@ import (
 func setupTestServer(t *testing.T) (*httptest.Server, *room.Manager) {
 	t.Helper()
 	rooms := room.NewManager()
-	handler := NewHandler(rooms, nil)
+	handler := NewHandler(rooms, nil, "")
 	server := httptest.NewServer(handler)
 	t.Cleanup(func() { server.Close() })
 	return server, rooms

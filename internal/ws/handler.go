@@ -21,18 +21,21 @@ import (
 
 // Handler manages WebSocket connections and routes messages.
 type Handler struct {
-	rooms *room.Manager
-	store *store.Store
-	aiMu  sync.Mutex
-	ais   map[string]*ai.AI // room code -> AI instance
+	rooms         *room.Manager
+	store         *store.Store
+	aiMu          sync.Mutex
+	ais           map[string]*ai.AI // room code -> AI instance
+	allowedOrigin string            // if set, only accept WS from this origin
 }
 
 // NewHandler creates a new WebSocket handler.
-func NewHandler(rooms *room.Manager, st *store.Store) *Handler {
+// If allowedOrigin is non-empty, only WebSocket connections from that origin are accepted.
+func NewHandler(rooms *room.Manager, st *store.Store, allowedOrigin string) *Handler {
 	return &Handler{
-		rooms: rooms,
-		store: st,
-		ais:   make(map[string]*ai.AI),
+		rooms:         rooms,
+		store:         st,
+		ais:           make(map[string]*ai.AI),
+		allowedOrigin: allowedOrigin,
 	}
 }
 
@@ -88,9 +91,13 @@ func (h *Handler) removeAI(roomCode string) {
 
 // ServeHTTP upgrades the connection to WebSocket and starts handling messages.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // Allow all origins for development
-	})
+	opts := &websocket.AcceptOptions{}
+	if h.allowedOrigin != "" {
+		opts.OriginPatterns = []string{h.allowedOrigin}
+	} else {
+		opts.InsecureSkipVerify = true // Allow all origins for development
+	}
+	conn, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		log.Printf("websocket accept error: %v", err)
 		return
@@ -147,6 +154,9 @@ func (h *Handler) handleConnection(ctx context.Context, conn *websocket.Conn) {
 
 		case MsgJoinGame:
 			currentRoom, playerID = h.handleJoinGame(ctx, conn, msg)
+
+		case MsgRejoinGame:
+			currentRoom, playerID = h.handleRejoinGame(ctx, conn, msg)
 
 		case MsgPlaceShip:
 			if currentRoom == nil {
@@ -267,6 +277,162 @@ func (h *Handler) handleJoinGame(ctx context.Context, conn *websocket.Conn, msg 
 	return r, playerID
 }
 
+// handleRejoinGame reconnects a player to an existing game room.
+func (h *Handler) handleRejoinGame(ctx context.Context, conn *websocket.Conn, msg ClientMessage) (*room.Room, string) {
+	r, err := h.rooms.GetRoom(msg.RoomCode)
+	if err != nil {
+		sendError(ctx, conn, "room not found")
+		return nil, ""
+	}
+
+	playerID := msg.PlayerID
+	if playerID == "" {
+		sendError(ctx, conn, "player_id required for rejoin")
+		return nil, ""
+	}
+
+	// Verify this player belongs to this game.
+	_, pErr := r.Game.PlayerIndex(playerID)
+	if pErr != nil {
+		sendError(ctx, conn, "player not found in this game")
+		return nil, ""
+	}
+
+	// Replace the player's connection in the room.
+	pc := &room.PlayerConn{PlayerID: playerID, Conn: conn}
+	r.ReplacePlayer(pc)
+
+	// Send full game state to the reconnecting player.
+	stateMsg := h.buildGameStateMessage(r, playerID)
+	_ = pc.Send(ctx, stateMsg)
+
+	// Notify opponent that player reconnected.
+	opponent := r.GetOpponentConn(playerID)
+	if opponent != nil {
+		_ = opponent.Send(ctx, ServerMessage{
+			Type:    MsgGameStart,
+			Message: "Opponent has reconnected",
+		})
+	}
+
+	log.Printf("player rejoined: room=%s player=%s", r.Code, playerID)
+	return r, playerID
+}
+
+// buildGameStateMessage constructs a full game_state message for reconnection.
+func (h *Handler) buildGameStateMessage(r *room.Room, playerID string) ServerMessage {
+	snap := r.Game.Snapshot()
+	cfg := snap.Config
+	ships := makeShipInfo(cfg.Ships)
+
+	idx, _ := r.Game.PlayerIndex(playerID)
+	player := snap.Players[idx]
+	opponent := snap.Players[1-idx]
+
+	// Build own board state (shows ships, hits, misses).
+	ownBoard := make([][]string, cfg.BoardSize)
+	for y := 0; y < cfg.BoardSize; y++ {
+		ownBoard[y] = make([]string, cfg.BoardSize)
+		for x := 0; x < cfg.BoardSize; x++ {
+			switch player.Board.Grid[y][x] {
+			case game.Ship:
+				ownBoard[y][x] = "ship"
+			case game.Hit:
+				ownBoard[y][x] = "hit"
+			case game.Miss:
+				ownBoard[y][x] = "miss"
+			default:
+				ownBoard[y][x] = "empty"
+			}
+		}
+	}
+
+	// Mark sunk cells on own board.
+	for _, ship := range player.Board.Ships {
+		if ship.IsSunk() {
+			for _, c := range ship.Coords() {
+				ownBoard[c.Y][c.X] = "sunk"
+			}
+		}
+	}
+
+	// Build opponent board state (only hits/misses/sunk — no ships).
+	opponentBoard := make([][]string, cfg.BoardSize)
+	for y := 0; y < cfg.BoardSize; y++ {
+		opponentBoard[y] = make([]string, cfg.BoardSize)
+		for x := 0; x < cfg.BoardSize; x++ {
+			opponentBoard[y][x] = "unknown"
+		}
+	}
+	for _, shot := range player.Shots {
+		if shot.Hit {
+			opponentBoard[shot.Coord.Y][shot.Coord.X] = "hit"
+		} else {
+			opponentBoard[shot.Coord.Y][shot.Coord.X] = "miss"
+		}
+	}
+	// Mark sunk ships on opponent board.
+	if opponent != nil {
+		for _, ship := range opponent.Board.Ships {
+			if ship.IsSunk() {
+				for _, c := range ship.Coords() {
+					opponentBoard[c.Y][c.X] = "sunk"
+				}
+			}
+		}
+	}
+
+	// Build placed ships list.
+	var placedShips []PlacedShipInfo
+	for _, ship := range player.Board.Ships {
+		placedShips = append(placedShips, PlacedShipInfo{
+			Name:        ship.Config.Name,
+			Length:      ship.Config.Length,
+			Start:       ship.Start,
+			Orientation: ship.Orient,
+		})
+	}
+
+	// Build remaining ships list.
+	var remainingShips []string
+	for name := range player.Unplaced {
+		remainingShips = append(remainingShips, name)
+	}
+
+	// Determine phase string and turn.
+	var phase string
+	var yourTurn *bool
+	switch snap.Phase {
+	case game.PhasePlacing:
+		phase = "placement"
+	case game.PhaseFiring:
+		phase = "firing"
+		yt := snap.Turn == idx
+		yourTurn = &yt
+	case game.PhaseFinished:
+		phase = "finished"
+	default:
+		phase = "waiting"
+	}
+
+	return ServerMessage{
+		Type:           MsgGameState,
+		RoomCode:       r.Code,
+		PlayerID:       playerID,
+		GameID:         snap.ID,
+		Config:         &cfg,
+		Ships:          ships,
+		Phase:          phase,
+		YourTurn:       yourTurn,
+		OwnBoard:       ownBoard,
+		OpponentBoard:  opponentBoard,
+		PlacedShips:    placedShips,
+		RemainingShips: remainingShips,
+		Remaining:      remainingShips,
+		Winner:         snap.Winner,
+	}
+}
+
 // handlePlaceShip processes a ship placement request.
 func (h *Handler) handlePlaceShip(ctx context.Context, r *room.Room, playerID string, msg ClientMessage) {
 	if msg.Start == nil {
@@ -363,20 +529,22 @@ func (h *Handler) handleFire(ctx context.Context, r *room.Room, playerID string,
 
 	// Send result to the attacker.
 	_ = r.SendTo(ctx, playerID, ServerMessage{
-		Type:     MsgFireResult,
-		Coord:    &result.Coord,
-		Hit:      &result.Hit,
-		SunkShip: result.SunkShip,
+		Type:           MsgFireResult,
+		Coord:          &result.Coord,
+		Hit:            &result.Hit,
+		SunkShip:       result.SunkShip,
+		SunkShipCoords: result.SunkShipCoords,
 	})
 
 	// Notify the defender.
 	opponent := r.GetOpponentConn(playerID)
 	if opponent != nil {
 		_ = opponent.Send(ctx, ServerMessage{
-			Type:     MsgOpponentFired,
-			Coord:    &result.Coord,
-			Hit:      &result.Hit,
-			SunkShip: result.SunkShip,
+			Type:           MsgOpponentFired,
+			Coord:          &result.Coord,
+			Hit:            &result.Hit,
+			SunkShip:       result.SunkShip,
+			SunkShipCoords: result.SunkShipCoords,
 		})
 	}
 
@@ -496,10 +664,11 @@ func (h *Handler) aiTakeTurn(ctx context.Context, r *room.Room, humanPlayerID st
 
 	// Notify human that AI fired at their board.
 	_ = r.SendTo(ctx, humanPlayerID, ServerMessage{
-		Type:     MsgOpponentFired,
-		Coord:    &result.Coord,
-		Hit:      &result.Hit,
-		SunkShip: result.SunkShip,
+		Type:           MsgOpponentFired,
+		Coord:          &result.Coord,
+		Hit:            &result.Hit,
+		SunkShip:       result.SunkShip,
+		SunkShipCoords: result.SunkShipCoords,
 	})
 
 	if result.GameOver {

@@ -19,6 +19,8 @@ type Player struct {
 	Shots []ShotRecord `json:"shots"`
 
 	// Quick lookup: coordinates this player has already fired at.
+	// Excluded from JSON because Coord keys can't be JSON map keys.
+	// Use RebuildFiredAt() after deserialization.
 	FiredAt map[Coord]bool `json:"-"`
 }
 
@@ -76,4 +78,13 @@ func (p *Player) RecordShot(c Coord, hit bool, sunkShip string) {
 // HasFiredAt returns true if the player already fired at this coordinate.
 func (p *Player) HasFiredAt(c Coord) bool {
 	return p.FiredAt[c]
+}
+
+// RebuildFiredAt reconstructs the FiredAt map from the Shots slice.
+// Useful after JSON deserialization.
+func (p *Player) RebuildFiredAt() {
+	p.FiredAt = make(map[Coord]bool, len(p.Shots))
+	for _, s := range p.Shots {
+		p.FiredAt[s.Coord] = true
+	}
 }

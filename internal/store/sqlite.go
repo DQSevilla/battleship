@@ -57,6 +57,42 @@ type FireMoveData struct {
 	GameOver bool       `json:"game_over"`
 }
 
+// GameDetail is a GameRecord with parsed JSON fields for API responses.
+type GameDetail struct {
+	GameRecord
+	Config json.RawMessage `json:"config"`
+}
+
+// ToDetail converts a GameRecord to a GameDetail with parsed JSON.
+func (r *GameRecord) ToDetail() GameDetail {
+	cfg := json.RawMessage(r.ConfigJSON)
+	if len(cfg) == 0 {
+		cfg = json.RawMessage("{}")
+	}
+	return GameDetail{
+		GameRecord: *r,
+		Config:     cfg,
+	}
+}
+
+// MoveDetail is a MoveRecord with parsed JSON data for API responses.
+type MoveDetail struct {
+	MoveRecord
+	Data json.RawMessage `json:"data"`
+}
+
+// ToDetail converts a MoveRecord to a MoveDetail with parsed JSON.
+func (m *MoveRecord) ToDetail() MoveDetail {
+	data := json.RawMessage(m.DataJSON)
+	if len(data) == 0 {
+		data = json.RawMessage("{}")
+	}
+	return MoveDetail{
+		MoveRecord: *m,
+		Data:       data,
+	}
+}
+
 // New opens or creates a SQLite database and initializes the schema.
 func New(dbPath string) (*Store, error) {
 	db, err := sqlx.Open("sqlite", dbPath)
@@ -176,6 +212,50 @@ func (s *Store) ListCompletedGames(limit int) ([]GameRecord, error) {
 	return games, err
 }
 
+// ListActiveGames returns games that are not yet finished (for server restart restoration).
+func (s *Store) ListActiveGames() ([]GameRecord, error) {
+	var games []GameRecord
+	err := s.db.Select(&games, "SELECT * FROM games WHERE phase != 'finished' ORDER BY created_at ASC")
+	return games, err
+}
+
+// RestoreGame reconstructs a live *game.Game from a GameRecord.
+func RestoreGame(rec *GameRecord) (*game.Game, error) {
+	var cfg game.GameConfig
+	if err := json.Unmarshal([]byte(rec.ConfigJSON), &cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config: %w", err)
+	}
+
+	type stateSnapshot struct {
+		Turn    int             `json:"turn"`
+		Players [2]*game.Player `json:"players"`
+	}
+	var snap stateSnapshot
+	if err := json.Unmarshal([]byte(rec.StateJSON), &snap); err != nil {
+		return nil, fmt.Errorf("unmarshal state: %w", err)
+	}
+
+	// Rebuild FiredAt maps from Shots.
+	for _, p := range snap.Players {
+		if p != nil {
+			p.RebuildFiredAt()
+		}
+	}
+
+	phase := game.PhaseWaiting
+	switch rec.Phase {
+	case "placing":
+		phase = game.PhasePlacing
+	case "firing":
+		phase = game.PhaseFiring
+	case "finished":
+		phase = game.PhaseFinished
+	}
+
+	g := game.RestoreGame(rec.ID, cfg, phase, snap.Players, snap.Turn, rec.Winner, rec.CreatedAt, rec.UpdatedAt)
+	return g, nil
+}
+
 // --- Helper to build game records from live state ---
 
 func PhaseToString(p game.GamePhase) string {
@@ -194,41 +274,44 @@ func PhaseToString(p game.GamePhase) string {
 }
 
 // BuildGameRecord creates a GameRecord from a live game.
+// Uses Game.Snapshot() for thread-safe access to game fields.
 func BuildGameRecord(g *game.Game, roomCode, mode string) GameRecord {
-	cfgJSON, _ := json.Marshal(g.Config)
+	snap := g.Snapshot()
+
+	cfgJSON, _ := json.Marshal(snap.Config)
 
 	// Build a serializable state snapshot.
 	type stateSnapshot struct {
 		Turn    int             `json:"turn"`
 		Players [2]*game.Player `json:"players"`
 	}
-	snap := stateSnapshot{Turn: g.Turn, Players: g.Players}
-	stateJSON, _ := json.Marshal(snap)
+	ss := stateSnapshot{Turn: snap.Turn, Players: snap.Players}
+	stateJSON, _ := json.Marshal(ss)
 
 	p1 := ""
 	p2 := ""
-	if g.Players[0] != nil {
-		p1 = g.Players[0].ID
+	if snap.Players[0] != nil {
+		p1 = snap.Players[0].ID
 	}
-	if g.Players[1] != nil {
-		p2 = g.Players[1].ID
+	if snap.Players[1] != nil {
+		p2 = snap.Players[1].ID
 	}
 
 	rec := GameRecord{
-		ID:         g.ID,
+		ID:         snap.ID,
 		RoomCode:   roomCode,
 		Mode:       mode,
 		ConfigJSON: string(cfgJSON),
 		StateJSON:  string(stateJSON),
-		Phase:      PhaseToString(g.Phase),
+		Phase:      PhaseToString(snap.Phase),
 		Player1ID:  p1,
 		Player2ID:  p2,
-		Winner:     g.Winner,
-		CreatedAt:  g.CreatedAt,
-		UpdatedAt:  g.UpdatedAt,
+		Winner:     snap.Winner,
+		CreatedAt:  snap.CreatedAt,
+		UpdatedAt:  snap.UpdatedAt,
 	}
 
-	if g.Phase == game.PhaseFinished {
+	if snap.Phase == game.PhaseFinished {
 		now := time.Now()
 		rec.CompletedAt = &now
 	}

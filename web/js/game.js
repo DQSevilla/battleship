@@ -50,6 +50,17 @@
     }
   }
 
+  function colLabel(x) {
+    // A-Z for 0-25, then AA, AB, etc. for 26+
+    let label = "";
+    let n = x;
+    do {
+      label = String.fromCharCode(65 + (n % 26)) + label;
+      n = Math.floor(n / 26) - 1;
+    } while (n >= 0);
+    return label;
+  }
+
   function log(text, cls) {
     const el = document.getElementById("game-log");
     const entry = document.createElement("div");
@@ -58,17 +69,89 @@
     el.prepend(entry);
   }
 
+  // --- Session Persistence (survive page refresh) ---
+  function saveSession() {
+    try {
+      sessionStorage.setItem(
+        "battleship_session",
+        JSON.stringify({
+          playerID: state.playerID,
+          roomCode: state.roomCode,
+          gameID: state.gameID,
+          mode: state.mode,
+        })
+      );
+    } catch (e) {
+      // sessionStorage may be unavailable
+    }
+  }
+
+  function clearSession() {
+    try {
+      sessionStorage.removeItem("battleship_session");
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function tryRejoinFromSession() {
+    try {
+      const raw = sessionStorage.getItem("battleship_session");
+      if (!raw) return false;
+      const session = JSON.parse(raw);
+      if (session.playerID && session.roomCode) {
+        state.playerID = session.playerID;
+        state.roomCode = session.roomCode;
+        state.gameID = session.gameID;
+        state.mode = session.mode || "human";
+        connect(() => {
+          send({
+            type: "rejoin_game",
+            room_code: state.roomCode,
+            player_id: state.playerID,
+          });
+        });
+        return true;
+      }
+    } catch (e) {
+      // ignore parse errors
+    }
+    return false;
+  }
+
   // --- WebSocket ---
-  function connect() {
+  let pendingOnOpen = null; // callback to run once WS opens
+
+  function connect(onOpen) {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${proto}//${location.host}/ws`);
+    pendingOnOpen = onOpen || null;
 
-    ws.onopen = () => console.log("WS connected");
+    ws.onopen = () => {
+      console.log("WS connected");
+      if (pendingOnOpen) {
+        pendingOnOpen();
+        pendingOnOpen = null;
+      }
+    };
     ws.onclose = () => {
       console.log("WS disconnected");
-      // Reconnect after a short delay if mid-game
-      if (state.phase !== "menu" && state.phase !== "gameover") {
-        setTimeout(connect, 2000);
+      // Reconnect after a short delay if mid-game, sending rejoin
+      if (
+        state.phase !== "menu" &&
+        state.phase !== "gameover" &&
+        state.roomCode &&
+        state.playerID
+      ) {
+        setTimeout(() => {
+          connect(() => {
+            send({
+              type: "rejoin_game",
+              room_code: state.roomCode,
+              player_id: state.playerID,
+            });
+          });
+        }, 2000);
       }
     };
     ws.onerror = (e) => console.error("WS error:", e);
@@ -91,6 +174,7 @@
         state.gameID = msg.game_id;
         state.config = msg.config;
         state.ships = msg.ships;
+        saveSession();
         if (state.mode === "human") {
           document.getElementById("display-room-code").textContent =
             msg.room_code;
@@ -105,6 +189,7 @@
         state.gameID = msg.game_id;
         state.config = msg.config;
         state.ships = msg.ships;
+        saveSession();
         // Wait for game_start
         break;
 
@@ -141,10 +226,13 @@
         onGameOver(msg);
         break;
 
+      case "game_state":
+        onGameState(msg);
+        break;
+
       case "opponent_left":
         if (state.phase !== "gameover") {
-          alert("Opponent disconnected.");
-          showScreen("menu");
+          log("Opponent disconnected.", "miss");
         }
         break;
     }
@@ -153,38 +241,25 @@
   // --- Menu ---
   document.getElementById("btn-vs-ai").addEventListener("click", () => {
     state.mode = "ai";
-    connect();
-    // Wait for connection before sending
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        clearInterval(interval);
-        send({ type: "create_game", mode: "ai" });
-      }
-    }, 50);
+    connect(() => {
+      send({ type: "create_game", mode: "ai" });
+    });
   });
 
   document.getElementById("btn-vs-human").addEventListener("click", () => {
     state.mode = "human";
-    connect();
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        clearInterval(interval);
-        send({ type: "create_game", mode: "human" });
-      }
-    }, 50);
+    connect(() => {
+      send({ type: "create_game", mode: "human" });
+    });
   });
 
   document.getElementById("btn-join").addEventListener("click", () => {
     const code = document.getElementById("input-room-code").value.trim();
     if (!code) return;
     state.mode = "human";
-    connect();
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        clearInterval(interval);
-        send({ type: "join_game", room_code: code.toUpperCase() });
-      }
-    }, 50);
+    connect(() => {
+      send({ type: "join_game", room_code: code.toUpperCase() });
+    });
   });
 
   // Allow Enter key on room code input
@@ -195,17 +270,12 @@
     });
 
   document.getElementById("btn-rematch").addEventListener("click", () => {
-    resetState();
-    // Reconnect and create a new game with the same mode
     const mode = state.mode || "ai";
+    resetState();
     state.mode = mode;
-    connect();
-    const interval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        clearInterval(interval);
-        send({ type: "create_game", mode: mode });
-      }
-    }, 50);
+    connect(() => {
+      send({ type: "create_game", mode: mode });
+    });
   });
 
   document.getElementById("btn-menu").addEventListener("click", () => {
@@ -215,6 +285,7 @@
 
   function resetState() {
     if (ws) ws.close();
+    clearSession();
     state = {
       playerID: "",
       roomCode: "",
@@ -248,11 +319,11 @@
     corner.className = "cell-header cell-corner";
     container.appendChild(corner);
 
-    // Column headers (A-J or more)
+    // Column headers (A-Z, then AA, AB, etc.)
     for (let x = 0; x < size; x++) {
       const header = document.createElement("div");
       header.className = "cell-header";
-      header.textContent = String.fromCharCode(65 + x);
+      header.textContent = colLabel(x);
       container.appendChild(header);
     }
 
@@ -558,16 +629,14 @@
 
   function onFireResult(msg) {
     const { x, y } = msg.coord;
-    const colLetter = String.fromCharCode(65 + x);
+    const colLetter = colLabel(x);
     const rowNum = y + 1;
 
     if (msg.hit) {
       if (msg.sunk_ship) {
-        state.opponentBoard[y][x] = "sunk";
         state.sunkOpponentShips.push(msg.sunk_ship);
-        // Mark all hits of this ship as sunk (we only know the last one for sure,
-        // but we mark all connected hits as sunk visually — approximate).
-        markSunkCells(state.opponentBoard, x, y);
+        // Use server-provided coordinates to mark all cells of the sunk ship.
+        markSunkCoordsOnBoard(state.opponentBoard, msg.sunk_ship_coords, x, y);
         log(`You sunk their ${msg.sunk_ship}!`, "sunk");
       } else {
         state.opponentBoard[y][x] = "hit";
@@ -583,14 +652,13 @@
 
   function onOpponentFired(msg) {
     const { x, y } = msg.coord;
-    const colLetter = String.fromCharCode(65 + x);
+    const colLetter = colLabel(x);
     const rowNum = y + 1;
 
     if (msg.hit) {
       if (msg.sunk_ship) {
-        state.ownBoard[y][x] = "sunk";
         state.sunkOwnShips.push(msg.sunk_ship);
-        markSunkCells(state.ownBoard, x, y);
+        markSunkCoordsOnBoard(state.ownBoard, msg.sunk_ship_coords, x, y);
         log(`They sunk your ${msg.sunk_ship}!`, "sunk");
       } else {
         state.ownBoard[y][x] = "hit";
@@ -604,8 +672,21 @@
     renderOwnBoard();
   }
 
-  // Mark connected hit cells as sunk (BFS from a sunk cell)
-  function markSunkCells(board, startX, startY) {
+  // Mark sunk ship cells using server-provided coordinates (accurate).
+  // Falls back to BFS if coordinates not provided (backward compat).
+  function markSunkCoordsOnBoard(board, coords, fallbackX, fallbackY) {
+    if (coords && coords.length > 0) {
+      for (const c of coords) {
+        board[c.y][c.x] = "sunk";
+      }
+    } else {
+      // Fallback: BFS from the sunk cell.
+      markSunkCellsBFS(board, fallbackX, fallbackY);
+    }
+  }
+
+  // Legacy BFS fallback for marking sunk cells.
+  function markSunkCellsBFS(board, startX, startY) {
     const size = state.config.board_size;
     const visited = new Set();
     const queue = [{ x: startX, y: startY }];
@@ -637,8 +718,103 @@
     }
   }
 
+  // --- Reconnection State Hydration ---
+  function onGameState(msg) {
+    state.playerID = msg.player_id;
+    state.roomCode = msg.room_code;
+    state.gameID = msg.game_id;
+    state.config = msg.config;
+    state.ships = msg.ships || [];
+
+    const size = state.config.board_size;
+
+    if (msg.phase === "placement") {
+      // Restore placement state.
+      state.ownBoard = msg.own_board || Array.from({ length: size }, () => Array(size).fill("empty"));
+      state.placedShips = {};
+      if (msg.placed_ships) {
+        for (const ps of msg.placed_ships) {
+          state.placedShips[ps.name] = {
+            start: ps.start,
+            orientation: ps.orientation,
+            length: ps.length,
+          };
+        }
+      }
+      state.remainingShips = state.ships.filter((s) => !state.placedShips[s.name]);
+      state.orientation = 0;
+
+      showScreen("placement");
+      renderShipList();
+      createBoard(
+        document.getElementById("board-placement"),
+        size,
+        onPlacementClick
+      );
+
+      // Render already-placed ships on the board.
+      const board = document.getElementById("board-placement");
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if (state.ownBoard[y][x] === "ship") {
+            const el = getCell(board, x, y);
+            if (el) el.className = "cell ship";
+          }
+        }
+      }
+
+      // Select next unplaced ship.
+      const next = state.ships.find((s) => !state.placedShips[s.name]);
+      if (next) selectShip(next.name);
+
+      board.addEventListener("mouseover", onPlacementHover);
+      board.addEventListener("mouseout", clearPreview);
+
+      log("Reconnected. Continue placing ships.", "hit");
+
+    } else if (msg.phase === "firing") {
+      // Restore firing state.
+      state.ownBoard = msg.own_board || Array.from({ length: size }, () => Array(size).fill("empty"));
+      state.opponentBoard = msg.opponent_board || Array.from({ length: size }, () => Array(size).fill("unknown"));
+      state.placedShips = {};
+      if (msg.placed_ships) {
+        for (const ps of msg.placed_ships) {
+          state.placedShips[ps.name] = {
+            start: ps.start,
+            orientation: ps.orientation,
+            length: ps.length,
+          };
+        }
+      }
+
+      showScreen("firing");
+      createBoard(document.getElementById("board-own"), size, null);
+      renderOwnBoard();
+      createBoard(
+        document.getElementById("board-opponent"),
+        size,
+        onFireClick
+      );
+      renderOpponentBoard();
+      setTurn(msg.your_turn);
+
+      log("Reconnected. Game resumed.", "hit");
+
+    } else if (msg.phase === "finished") {
+      // Game already over.
+      const youWin = msg.winner === state.playerID;
+      onGameOver({ you_win: youWin, winner: msg.winner });
+    } else {
+      // Waiting phase — show waiting screen.
+      document.getElementById("display-room-code").textContent = msg.room_code;
+      showScreen("waiting");
+      log("Reconnected. Waiting for opponent.", "hit");
+    }
+  }
+
   // --- Game Over ---
   function onGameOver(msg) {
+    clearSession();
     const title = document.getElementById("gameover-title");
     const message = document.getElementById("gameover-message");
 
@@ -654,4 +830,6 @@
 
     showScreen("gameover");
   }
+  // --- Auto-rejoin on page load ---
+  tryRejoinFromSession();
 })();

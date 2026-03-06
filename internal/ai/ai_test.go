@@ -177,11 +177,11 @@ func TestAICanCompleteFullGame(t *testing.T) {
 	maxShots := cfg.BoardSize * cfg.BoardSize
 	for shots < maxShots {
 		target := a.ChooseShot()
-		hit, sunkShip, err := board.ReceiveShot(target)
+		result, err := board.ReceiveShot(target)
 		if err != nil {
 			t.Fatalf("shot %d at (%d,%d): %v", shots, target.X, target.Y, err)
 		}
-		a.RecordResult(target, hit, sunkShip)
+		a.RecordResult(target, result.Hit, result.SunkShip)
 		shots++
 
 		if board.AllSunk() {

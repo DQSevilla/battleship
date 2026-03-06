@@ -106,6 +106,26 @@ func (r *Room) AddPlayer(pc *PlayerConn) error {
 	return ErrRoomFull
 }
 
+// ReplacePlayer replaces the connection for an existing player (used for reconnection).
+func (r *Room) ReplacePlayer(pc *PlayerConn) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i, existing := range r.Players {
+		if existing != nil && existing.PlayerID == pc.PlayerID {
+			r.Players[i] = pc
+			return
+		}
+	}
+	// Player wasn't in room yet (shouldn't happen for rejoin), add to first empty slot.
+	for i, existing := range r.Players {
+		if existing == nil {
+			r.Players[i] = pc
+			return
+		}
+	}
+}
+
 // RemovePlayer removes a player from the room and returns true if the room is now empty.
 func (r *Room) RemovePlayer(playerID string) bool {
 	r.mu.Lock()
@@ -153,6 +173,22 @@ func (m *Manager) CreateRoom(gameID string, cfg game.GameConfig, mode string) (*
 	m.mu.Unlock()
 
 	return room, nil
+}
+
+// RestoreRoom restores a room from a previously persisted game (used on server restart).
+// The room has no player connections — players must rejoin via WebSocket.
+func (m *Manager) RestoreRoom(code string, g *game.Game, mode string) *Room {
+	room := &Room{
+		Code: code,
+		Game: g,
+		Mode: mode,
+	}
+
+	m.mu.Lock()
+	m.rooms[code] = room
+	m.mu.Unlock()
+
+	return room
 }
 
 // GetRoom retrieves a room by its code.
