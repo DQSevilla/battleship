@@ -1,5 +1,10 @@
 # Battleship — Writeup
 
+## Summary
+
+TL;DR: Claude Opus 4.6 + Golang + Vanila Web Technologies
+I didn't have much time for a spike unfortunately, but I'd say that my quality of life improvements and smart enemy AI were novel spikes given the time-frame of the assignment.
+
 ## Technologies and Tools Used
 
 - Golang for the server backend due to familiarity, performance, and ability to produce single large binaries that could more easily be orchestrated in a dockerfile
@@ -18,6 +23,8 @@ First I copied the original take-home assignmetn into `PROBLEM.md` and worked as
 - What my "spike" was going to be
 
 I answered these in-turn and then asked it to generate a detailed `PLAN.md` on what steps to take to solve the problem. Originally Claude was eager to give time estimates for every task but I asked it to stop doing that because they were mostly exaggerated and worthless.
+
+As for the spike question I asked Claude to implement a smart AI that would go beyond random selection plus adjacent shots to hits, and use a probability distribution to shoot at "lonliner" spots on the board that are far away from ships, as most players like to separate their ships.
 
 I then asked Claude to work on the first few phases one-at-a-time so that I could review and make corrections to Claude's assumptions about the problem. During the first pass in which it wrote-out the core Go packages for the game logic, I made a few suggestions regarding standard library usage rather than reinventing everything from scratch, but was mostly happy with the output.
 

@@ -5,6 +5,7 @@
 
   // --- State ---
   let ws = null;
+  let pendingRejoin = false; // true while attempting auto-rejoin from sessionStorage
   let state = {
     playerID: "",
     roomCode: "",
@@ -104,6 +105,7 @@
         state.roomCode = session.roomCode;
         state.gameID = session.gameID;
         state.mode = session.mode || "human";
+        pendingRejoin = true;
         connect(() => {
           send({
             type: "rejoin_game",
@@ -165,6 +167,14 @@
     switch (msg.type) {
       case "error":
         console.error("Server error:", msg.message);
+        if (pendingRejoin) {
+          // Rejoin failed (room gone / player not found) — silently return to menu.
+          pendingRejoin = false;
+          clearSession();
+          resetState();
+          showScreen("menu");
+          break;
+        }
         alert(msg.message);
         break;
 
@@ -227,6 +237,7 @@
         break;
 
       case "game_state":
+        pendingRejoin = false;
         onGameState(msg);
         break;
 
@@ -318,6 +329,7 @@
   function resetState() {
     if (ws) ws.close();
     clearSession();
+    pendingRejoin = false;
     lastHoveredCell = null;
     state = {
       playerID: "",

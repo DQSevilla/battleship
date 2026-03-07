@@ -3,3 +3,4 @@
 - There should also be an option for ship count doubling, if you choose the large size. But you can also play with normal amount of ships
 - Pressing a number while on the place your ships screen should swap you to the ship with that number of spaces taken up unless it has been placed already
 - Right now pressing "R" works but in the UI, the ship disappears until you move the mouse and it shows up again. Ideally this shouldn't happen
+- Whenever I open the app for the first time I get a notification that "no room is found" which is not correct
