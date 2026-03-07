@@ -11,6 +11,17 @@
   <div id="screen-menu" class="screen active">
     <h1>Battleship</h1>
     <div class="menu-container">
+      <div class="board-size-selector">
+        <label class="size-option">
+          <input type="radio" name="board-size" value="normal" checked> Normal (10×10)
+        </label>
+        <label class="size-option">
+          <input type="radio" name="board-size" value="large"> Large (20×20)
+        </label>
+        <label class="double-ships-option" id="double-ships-label" style="display:none;">
+          <input type="checkbox" id="chk-double-ships"> Double Ships (10 ships)
+        </label>
+      </div>
       <button id="btn-vs-ai" class="btn btn-primary">Play vs AI</button>
       <button id="btn-vs-human" class="btn btn-secondary">Play vs Human</button>
       <div class="divider">or</div>
@@ -28,6 +39,7 @@
       <p>Waiting for opponent...</p>
       <p class="room-code-display">Room Code: <span id="display-room-code"></span></p>
       <p class="hint">Share this code with your opponent</p>
+      <button class="btn btn-small btn-back-menu" style="margin-top: 1.5rem;">Back to Menu</button>
     </div>
   </div>
 
@@ -39,6 +51,7 @@
         <div id="ship-list" class="ship-list"></div>
         <button id="btn-rotate" class="btn btn-small">Rotate (R)</button>
         <p id="placement-status" class="status-text"></p>
+        <button class="btn btn-small btn-back-menu">Back to Menu</button>
       </div>
       <div class="board-wrapper">
         <h2>Your Board</h2>
@@ -50,7 +63,10 @@
   <!-- Firing Screen -->
   <div id="screen-firing" class="screen">
     <div class="firing-container">
-      <p id="turn-indicator" class="turn-indicator"></p>
+      <div class="firing-top-bar">
+        <p id="turn-indicator" class="turn-indicator"></p>
+        <button class="btn btn-small btn-back-menu">Back to Menu</button>
+      </div>
       <div class="boards">
         <div class="board-wrapper">
           <h2>Your Fleet</h2>

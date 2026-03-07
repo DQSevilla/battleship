@@ -27,6 +27,39 @@ func DefaultConfig() GameConfig {
 	}
 }
 
+// LargeConfig returns a large 20x20 board with the standard 5 ships.
+func LargeConfig() GameConfig {
+	return GameConfig{
+		BoardSize: 20,
+		Ships: []ShipConfig{
+			{Name: "Carrier", Length: 5},
+			{Name: "Battleship", Length: 4},
+			{Name: "Cruiser", Length: 3},
+			{Name: "Submarine", Length: 3},
+			{Name: "Destroyer", Length: 2},
+		},
+	}
+}
+
+// LargeDoubleConfig returns a large 20x20 board with doubled ships (10 ships).
+func LargeDoubleConfig() GameConfig {
+	return GameConfig{
+		BoardSize: 20,
+		Ships: []ShipConfig{
+			{Name: "Carrier", Length: 5},
+			{Name: "Carrier II", Length: 5},
+			{Name: "Battleship", Length: 4},
+			{Name: "Battleship II", Length: 4},
+			{Name: "Cruiser", Length: 3},
+			{Name: "Cruiser II", Length: 3},
+			{Name: "Submarine", Length: 3},
+			{Name: "Submarine II", Length: 3},
+			{Name: "Destroyer", Length: 2},
+			{Name: "Destroyer II", Length: 2},
+		},
+	}
+}
+
 // Validate checks that the config is playable.
 func (c GameConfig) Validate() error {
 	if c.BoardSize < 2 {

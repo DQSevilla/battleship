@@ -181,7 +181,19 @@ func (h *Handler) handleConnection(ctx context.Context, conn *websocket.Conn) {
 // handleCreateGame creates a new room and adds the player to it.
 func (h *Handler) handleCreateGame(ctx context.Context, conn *websocket.Conn, msg ClientMessage) (*room.Room, string) {
 	playerID := generatePlayerID()
-	cfg := game.DefaultConfig()
+
+	// Select config based on client board size choice.
+	var cfg game.GameConfig
+	switch msg.BoardSize {
+	case "large":
+		if msg.DoubleShips {
+			cfg = game.LargeDoubleConfig()
+		} else {
+			cfg = game.LargeConfig()
+		}
+	default:
+		cfg = game.DefaultConfig()
+	}
 
 	mode := msg.Mode
 	if mode == "" {

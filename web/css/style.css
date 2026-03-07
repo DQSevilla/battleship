@@ -152,6 +152,39 @@ h2 {
   color: var(--text-dim);
 }
 
+/* === Board Size Selector === */
+.board-size-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.size-option,
+.double-ships-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.size-option input,
+.double-ships-option input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.double-ships-option {
+  padding-left: 1.2rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
 /* === Waiting === */
 .waiting-container {
   text-align: center;
@@ -355,6 +388,23 @@ h2 {
   width: 100%;
 }
 
+.firing-top-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  width: 100%;
+  justify-content: center;
+}
+
+.firing-top-bar .turn-indicator {
+  margin-bottom: 0;
+}
+
+.btn-back-menu {
+  margin-top: 0.5rem;
+}
+
 .turn-indicator {
   font-size: 1.1rem;
   font-weight: 600;
@@ -437,6 +487,25 @@ h2 {
 #gameover-message {
   color: var(--text-dim);
   margin-bottom: 0.5rem;
+}
+
+/* === Large Board Adjustments === */
+.board-large .cell-header {
+  font-size: 0.55rem;
+}
+
+.board-large .cell.hit::after,
+.board-large .cell.sunk::after {
+  font-size: 0.75rem;
+}
+
+.board-large .cell.miss::after {
+  font-size: 0.8rem;
+}
+
+/* Widen the screen when a large board is present */
+.screen.active:has(.board-large) {
+  max-width: 1200px;
 }
 
 /* === Responsive === */

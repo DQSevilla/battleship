@@ -1,10 +1,60 @@
 # Battleship — Writeup
 
-## Approach
+## Technologies and Tools Used
 
-I built this as a server-authoritative real-time game using Go for the backend and vanilla HTML/CSS/JS for the frontend. The guiding principle was: **all game logic runs on the server, the client is a thin display layer**. This is the right architecture for a competitive game because it makes cheating fundamentally difficult.
+- Golang for the server backend due to familiarity, performance, and ability to produce single large binaries that could more easily be orchestrated in a dockerfile
+  - Plus the `coder/websocket` package for WebSocket support
+- Pure-go SQLite for persistence, keeping simple on-disk records for ongoing games
+- Vanilla html/css to keep everything minimalist and easy to understand
+- Docker + Railway for deploying the service - free and dead-simple
+- Claude Opus 4.6 via Opencode for planning and implementation
 
-**Tools used:** Claude Opus 4.6 via opencode for planning and implementation, Go 1.24 with `coder/websocket` for WebSocket support, pure-Go SQLite for persistence.
+## Implementation Strategy
+
+First I copied the original take-home assignmetn into `PROBLEM.md` and worked asked claude to read it and ask necessary follow-up questions. It asked questions like:
+
+- What to use for the server language, frontend framework, datastore, etc
+- How I intended to deploy it
+- What my "spike" was going to be
+
+I answered these in-turn and then asked it to generate a detailed `PLAN.md` on what steps to take to solve the problem. Originally Claude was eager to give time estimates for every task but I asked it to stop doing that because they were mostly exaggerated and worthless.
+
+I then asked Claude to work on the first few phases one-at-a-time so that I could review and make corrections to Claude's assumptions about the problem. During the first pass in which it wrote-out the core Go packages for the game logic, I made a few suggestions regarding standard library usage rather than reinventing everything from scratch, but was mostly happy with the output.
+
+In the next few stages I ensured that some kind of web app with a simple GO http server was locally runnable in-case quick iteration was needed, which it did without trouble.
+
+Next, I figured I would experiment with Claude one-shotting the rest, prioritizing quick iteration on something that was broken over meticulously checking each phase of the plan before generating code. It seemed to hum along just fine for a while and test the code locally to make sure everything worked. Skeptical, I asked parallel gemini and opus agents to check its work, by reading the plan.md and asking them to evaluate the implementation. It found several issues.
+
+Here's an AI summary of the problems found this way:
+
+Critical / High Priority
+1. Dockerfile Go version mismatch — Dockerfile used golang:1.23-alpine but go.mod declared go 1.24.0. Would likely break the build.
+2. No reconnection support — The plan explicitly called for graceful reconnection. The server saved state to SQLite on every action, but there was zero code to load it back. If a player disconnected, their game was gone.
+3. No page refresh survival — The client had no mechanism to rejoin a game after refresh. The onclose handler reconnected the WebSocket but never sent a rejoin message — the new connection was anonymous and useless.
+4. BuildGameRecord data race — store.BuildGameRecord() accessed Game struct fields (Config, Turn, Players, Phase, etc.) directly without acquiring the game's mutex, while other goroutines (like aiTakeTurn) could be mutating those same fields concurrently.
+5. Player.FiredAt lost on serialization — FiredAt map[Coord]bool was tagged json:"-", meaning it was excluded from JSON serialization. If state restoration from the DB were ever implemented, the duplicate-shot prevention map would be silently empty.
+Medium Priority
+6. REST API hid data — ConfigJSON, StateJSON, and MoveRecord.DataJSON were all tagged json:"-", so the REST endpoints (/api/games, /api/games/{id}) returned game metadata but not the actual game config or move data. The history API was effectively useless.
+7. Sunk ship BFS was incorrect — When a ship sank, the client used BFS to flood-fill connected "hit" cells as "sunk." If two different ships had adjacent hits, the BFS would incorrectly mark the wrong ship's cells as sunk. The server knew the exact coordinates but didn't send them.
+8. WebSocket polling with setInterval — Menu buttons used setInterval(50ms) to poll ws.readyState === OPEN instead of using the ws.onopen callback. This was a race-prone pattern that could poll forever if the connection failed.
+9. No graceful HTTP shutdown — http.ListenAndServe blocked forever with no signal handling. Active WebSocket connections would be killed abruptly on SIGTERM/SIGINT (e.g., during Railway deploys).
+10. InsecureSkipVerify: true in production — WebSocket accepted connections from any origin with no way to restrict it. Fine for development, a vulnerability in production.
+11. AI PlaceShips unbounded recursion — If ship placement failed after 1000 attempts, the function called itself recursively with no depth limit. Could stack overflow on pathological configs.
+12. No store tests — The store package (SQLite schema, UPSERT, BuildGameRecord serialization, RestoreGame) had zero test coverage.
+13. No room tests — The room package (mutex-protected room lifecycle, code generation, player management) had zero test coverage.
+Low Priority
+14. Column headers limited to A–Z — String.fromCharCode(65 + x) broke for boards wider than 26 columns, despite the plan emphasizing configurable board sizes as a scalability feature.
+15. Board.PlaceShip duplicated coordinate logic — Manually computed ship coordinates instead of reusing the existing PlacedShip.Coords() method. Minor DRY violation.
+
+I asked Opus to implement changes to fix this and then re-asked a new instance to double check work against the plan. This time, the only issues it complained about were trivial and unimportant, which was a good sign.
+
+Then, I signed up with Railway, which was easy to set-up and publish to via the CLI on macos. Claude actually had trouble running the correct commands so I quickly browsed their documentation and got it working with a few commands and button-presses on the dashboard. The site was finally viewable on https://battleship-production-a93c.up.railway.app/
+
+I played around manually with the vs AI mode and the multiplayer mode. Both worked in principal but I noticed some things that were missing or that I most eagerly wanted to add, which I bulleted quickly in `IMPROVEMENTS.md` before asking another claude instance to get to work.
+
+# AI Generated Summary
+
+Readers be warned: This is non-reviewed AI generated output of the final architecture of the app, not really cleaned up and minimized for human review.
 
 ## Architecture
 

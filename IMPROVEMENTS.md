@@ -1,0 +1,5 @@
+- There should be a back to main menu button when in the middle of a game
+- The grid size you have there now should be "Normal" and there should be a "Large" size that is twice as large
+- There should also be an option for ship count doubling, if you choose the large size. But you can also play with normal amount of ships
+- Pressing a number while on the place your ships screen should swap you to the ship with that number of spaces taken up unless it has been placed already
+- Right now pressing "R" works but in the UI, the ship disappears until you move the mouse and it shows up again. Ideally this shouldn't happen

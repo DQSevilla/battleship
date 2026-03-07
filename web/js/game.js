@@ -239,17 +239,37 @@
   }
 
   // --- Menu ---
+  // Board size selector: show/hide "Double Ships" checkbox when Large is selected.
+  document.querySelectorAll('input[name="board-size"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const label = document.getElementById("double-ships-label");
+      label.style.display = radio.value === "large" && radio.checked ? "" : "none";
+      if (radio.value !== "large") {
+        document.getElementById("chk-double-ships").checked = false;
+      }
+    });
+  });
+
+  function getMenuBoardOptions() {
+    const sizeRadio = document.querySelector('input[name="board-size"]:checked');
+    const boardSize = sizeRadio ? sizeRadio.value : "normal";
+    const doubleShips = boardSize === "large" && document.getElementById("chk-double-ships").checked;
+    return { board_size: boardSize, double_ships: doubleShips };
+  }
+
   document.getElementById("btn-vs-ai").addEventListener("click", () => {
     state.mode = "ai";
+    const opts = getMenuBoardOptions();
     connect(() => {
-      send({ type: "create_game", mode: "ai" });
+      send({ type: "create_game", mode: "ai", ...opts });
     });
   });
 
   document.getElementById("btn-vs-human").addEventListener("click", () => {
     state.mode = "human";
+    const opts = getMenuBoardOptions();
     connect(() => {
-      send({ type: "create_game", mode: "human" });
+      send({ type: "create_game", mode: "human", ...opts });
     });
   });
 
@@ -271,10 +291,11 @@
 
   document.getElementById("btn-rematch").addEventListener("click", () => {
     const mode = state.mode || "ai";
+    const opts = getMenuBoardOptions();
     resetState();
     state.mode = mode;
     connect(() => {
-      send({ type: "create_game", mode: mode });
+      send({ type: "create_game", mode: mode, ...opts });
     });
   });
 
@@ -283,9 +304,21 @@
     showScreen("menu");
   });
 
+  // All "Back to Menu" buttons across screens.
+  document.querySelectorAll(".btn-back-menu").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (state.phase === "firing" || state.phase === "placement") {
+        if (!confirm("Leave the current game?")) return;
+      }
+      resetState();
+      showScreen("menu");
+    });
+  });
+
   function resetState() {
     if (ws) ws.close();
     clearSession();
+    lastHoveredCell = null;
     state = {
       playerID: "",
       roomCode: "",
@@ -310,6 +343,16 @@
   // --- Board Rendering ---
   function createBoard(container, size, clickHandler) {
     container.innerHTML = "";
+
+    // Dynamically set cell size for large boards.
+    if (size > 10) {
+      container.style.setProperty("--cell-size", "20px");
+      container.classList.add("board-large");
+    } else {
+      container.style.removeProperty("--cell-size");
+      container.classList.remove("board-large");
+    }
+
     // +1 for headers
     container.style.gridTemplateColumns = `repeat(${size + 1}, var(--cell-size))`;
     container.style.gridTemplateRows = `repeat(${size + 1}, var(--cell-size))`;
@@ -456,6 +499,7 @@
   function onPlacementHover(e) {
     const cell = e.target.closest(".cell");
     if (!cell || !state.selectedShip) return;
+    lastHoveredCell = cell;
     clearPreview();
 
     const x = parseInt(cell.dataset.x);
@@ -531,11 +575,32 @@
     clearPreview();
   });
 
+  // Track last hovered cell for re-triggering preview after rotate.
+  let lastHoveredCell = null;
+
   document.addEventListener("keydown", (e) => {
+    if (state.phase !== "placement") return;
+
+    // R key: rotate and re-trigger preview at the last hovered cell.
     if (e.key === "r" || e.key === "R") {
-      if (state.phase === "placement") {
-        state.orientation = state.orientation === 0 ? 1 : 0;
-        clearPreview();
+      state.orientation = state.orientation === 0 ? 1 : 0;
+      clearPreview();
+      // Re-trigger preview at the last hovered position.
+      if (lastHoveredCell) {
+        const fakeEvent = { target: lastHoveredCell };
+        onPlacementHover(fakeEvent);
+      }
+      return;
+    }
+
+    // Number keys 1-9: select the first unplaced ship whose length matches.
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 9) {
+      const match = state.ships.find(
+        (s) => s.length === num && !state.placedShips[s.name]
+      );
+      if (match) {
+        selectShip(match.name);
       }
     }
   });

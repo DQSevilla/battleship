@@ -33,7 +33,9 @@ type ClientMessage struct {
 	Type string `json:"type"`
 
 	// create_game fields
-	Mode string `json:"mode,omitempty"` // "ai" or "human"
+	Mode        string `json:"mode,omitempty"`         // "ai" or "human"
+	BoardSize   string `json:"board_size,omitempty"`   // "normal" (10x10) or "large" (20x20)
+	DoubleShips bool   `json:"double_ships,omitempty"` // true to double ships on large board
 
 	// join_game / rejoin_game fields
 	RoomCode string `json:"room_code,omitempty"`
