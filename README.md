@@ -2,6 +2,10 @@
 
 A server-authoritative Battleship game with AI and multiplayer modes. Built with Go, vanilla JS, and SQLite.
 
+## For Sentience Reviewers
+
+Please read [WRITEUP.md](WRITEUP.md) for full commentary.
+
 ## Quick Start
 
 ```bash
